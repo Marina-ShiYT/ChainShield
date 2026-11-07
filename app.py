@@ -4,18 +4,18 @@ import sqlite3
 import bcrypt
 import time
 
-# ================= 数据库管理模块 (保持原样) =================
+# ================= 数据库管理模块 (已修复：Key 与账号绑定) =================
 DB_NAME = "chainshield_users.db"
 
 def init_db():
-    """初始化数据库，创建用户表和配置表"""
+    """初始化数据库，创建用户表"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # 用户表：包含用户名、密码哈希、以及专属的 API Key
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (username TEXT PRIMARY KEY, 
-                  password_hash TEXT NOT NULL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS config
-                 (key TEXT PRIMARY KEY, value TEXT NOT NULL)''')
+                  password_hash TEXT NOT NULL,
+                  api_key TEXT)''')
     conn.commit()
     conn.close()
 
@@ -25,7 +25,7 @@ def register_user(username, password):
     c = conn.cursor()
     try:
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-        c.execute("INSERT INTO users VALUES (?, ?)", (username, hashed))
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -44,22 +44,22 @@ def authenticate_user(username, password):
         return True
     return False
 
-def save_api_key(api_key):
-    """保存API Key到数据库"""
+def save_api_key(username, api_key):
+    """保存当前用户的 API Key 到数据库"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('zhipu_api_key', ?)", (api_key,))
+    c.execute("UPDATE users SET api_key = ? WHERE username = ?", (api_key, username))
     conn.commit()
     conn.close()
 
-def get_api_key():
-    """从数据库获取API Key"""
+def get_api_key(username):
+    """从数据库获取当前用户的 API Key"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT value FROM config WHERE key = 'zhipu_api_key'")
+    c.execute("SELECT api_key FROM users WHERE username = ?", (username,))
     result = c.fetchone()
     conn.close()
-    return result[0] if result else None
+    return result[0] if result and result[0] else None
 
 init_db()
 
@@ -122,9 +122,10 @@ if "is_generating" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 控制面板")
     
-    # 【唯一修改处：API Key 安全展示与保存逻辑（增加二次确认）】
+    # 【已修复：API Key 按当前登录用户隔离】
     st.subheader("🔑 配置 API Key")
-    current_key = get_api_key()
+    current_user = st.session_state.username
+    current_key = get_api_key(current_user)
     
     # 如果数据库里有 Key，生成脱敏显示文本（前4位 + **** + 后4位）
     if current_key and len(current_key) > 8:
@@ -148,7 +149,7 @@ with st.sidebar:
         else:
             # 只有勾选了确认框，才允许保存
             if confirm_save:
-                save_api_key(new_key)
+                save_api_key(current_user, new_key)
                 st.success("Key 已安全保存！")
                 st.rerun()  # 刷新页面以显示脱敏后的 Key
             else:
@@ -164,7 +165,7 @@ with st.sidebar:
         st.success(f"已加载文件: {uploaded_file.name}")
         
         if st.button("🚀 开始智能审计", type="primary"):
-            api_key = get_api_key()
+            api_key = get_api_key(current_user)
             if not api_key:
                 st.error("请先在上方配置 API Key！")
             else:
@@ -216,7 +217,8 @@ if prompt := st.chat_input("你可以针对审计报告继续提问，例如：'
         
         messages_payload = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
         
-        api_key = get_api_key()
+        current_user = st.session_state.username
+        api_key = get_api_key(current_user)
         if not api_key:
             st.error("请先在侧边栏配置 API Key！")
         else:
