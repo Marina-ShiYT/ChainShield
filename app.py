@@ -117,28 +117,33 @@ if st.sidebar.button("退出登录"):
     st.session_state.username = ""
     st.rerun()
 
-# --- Key 设置模块 (带确认勾选框) ---
+# --- Key 设置模块 (带确认勾选框 & 真实验证 & 严格脱敏) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ API 设置")
 current_key = get_api_key(st.session_state.username)
 
-# 如果数据库里有 key，显示脱敏；如果没有，显示空
-display_key = ""
+# 【严格脱敏展示】如果数据库里有 key，只显示前4位和后4位
 if current_key:
-    display_key = current_key[:6] + "..." + current_key[-4:] if len(current_key) > 10 else "******"
+    if len(current_key) > 8:
+        masked_key = current_key[:4] + "****" + current_key[-4:]
+    else:
+        masked_key = "******"
+    st.sidebar.success(f"✅ 当前已配置 Key: `{masked_key}`")
+else:
+    st.sidebar.warning("⚠️ 尚未配置 Key")
 
-with st.sidebar.expander("配置 API Key", expanded=(not current_key)):
-    new_key = st.text_input("ZhipuAI Key", value="", type="password", placeholder="sk-...")
+with st.sidebar.expander("配置新的 API Key", expanded=(not current_key)):
+    # 【严格脱敏】输入框永远留空，防止明文回显或缓存泄露
+    new_key = st.text_input("输入新的 ZhipuAI Key", value="", type="password", placeholder="sk-...")
     confirm_check = st.checkbox("我已阅读并确认 Key 将加密存储", key="key_confirm")
     
-    # ========== 唯一修改处：Key 保存标准改为"可以使用为准" ==========
     if st.button("保存 Key"):
         if not confirm_check:
             st.error("请先勾选确认框！")
         elif not new_key:
             st.warning("请输入 Key")
         else:
-            # 真实调用测试：以"可以使用"为保存标准
+            # 【真实可用性验证】以"可以使用"为保存标准
             st.info("⏳ 正在验证 Key 是否可用，请稍候...")
             try:
                 test_client = ZhipuAI(api_key=new_key)
@@ -150,11 +155,30 @@ with st.sidebar.expander("配置 API Key", expanded=(not current_key)):
                 # 测试通过，说明 Key 可用，才执行保存
                 update_api_key(st.session_state.username, new_key)
                 st.success("✅ Key 验证可用，保存成功！")
-                st.rerun()
+                st.rerun() # 刷新页面，输入框清空，显示脱敏Key
             except Exception as e:
                 st.error(f"❌ Key 不可用：{str(e)}")
                 st.warning("请检查 Key 是否正确，或账户余额是否充足。")
-    # ========== 修改处结束 ==========
+
+# 【新增：文件上传部分】
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 上传合约文件")
+uploaded_file = st.sidebar.file_uploader("上传 .sol 合约文件", type=["sol"])
+
+if uploaded_file is not None:
+    file_content = uploaded_file.read().decode("utf-8")
+    st.sidebar.success(f"已加载文件: {uploaded_file.name}")
+    
+    if st.sidebar.button("🚀 开始智能审计", type="primary"):
+        api_key = get_api_key(st.session_state.username)
+        if not api_key:
+            st.sidebar.error("请先配置 API Key！")
+        else:
+            # 将文件内容作为 prompt 发送给聊天界面
+            file_prompt = f"请审计以下智能合约文件：\n```solidity\n{file_content}\n```"
+            # 触发聊天输入的逻辑
+            st.session_state.messages.append({"role": "user", "content": file_prompt})
+            st.rerun()
 
 # 检查是否有 Key
 my_api_key = get_api_key(st.session_state.username)
