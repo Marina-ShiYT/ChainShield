@@ -122,46 +122,39 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ API 设置")
 current_key = get_api_key(st.session_state.username)
 
-# 【修改1：数据脱敏显示】如果数据库里有 key，显示脱敏后的格式
+# 如果数据库里有 key，显示脱敏；如果没有，显示空
 display_key = ""
 if current_key:
-    if len(current_key) > 10:
-        display_key = current_key[:6] + "****" + current_key[-4:]
-    else:
-        display_key = "******"
-    st.sidebar.success(f"✅ 当前已配置 Key: `{display_key}`")
-else:
-    st.sidebar.warning("⚠️ 尚未配置 Key")
+    display_key = current_key[:6] + "..." + current_key[-4:] if len(current_key) > 10 else "******"
 
 with st.sidebar.expander("配置 API Key", expanded=(not current_key)):
     new_key = st.text_input("ZhipuAI Key", value="", type="password", placeholder="sk-...")
     confirm_check = st.checkbox("我已阅读并确认 Key 将加密存储", key="key_confirm")
     
+    # ========== 唯一修改处：Key 保存标准改为"可以使用为准" ==========
     if st.button("保存 Key"):
-        if not new_key.startswith("sk-"):
-            st.warning("Key 格式似乎不正确 (应以 sk- 开头)")
-        elif not confirm_check:
+        if not confirm_check:
             st.error("请先勾选确认框！")
+        elif not new_key:
+            st.warning("请输入 Key")
         else:
-            # 【修改2：保存标准改为真实可用性验证】
-            st.info("正在验证 Key 的有效性，请稍候...")
+            # 真实调用测试：以"可以使用"为保存标准
+            st.info("⏳ 正在验证 Key 是否可用，请稍候...")
             try:
                 test_client = ZhipuAI(api_key=new_key)
-                # 发起一个极低成本的测试请求
                 test_response = test_client.chat.completions.create(
                     model="glm-4-flash",
                     messages=[{"role": "user", "content": "hi"}],
                     max_tokens=5
                 )
-                # 如果没报错，说明 Key 有效，才执行保存
+                # 测试通过，说明 Key 可用，才执行保存
                 update_api_key(st.session_state.username, new_key)
-                st.success("✅ Key 验证通过并保存成功！")
+                st.success("✅ Key 验证可用，保存成功！")
                 st.rerun()
-                
             except Exception as e:
-                # 如果报错，说明 Key 无效，拦截保存
-                st.error(f"❌ Key 验证失败：{str(e)}")
+                st.error(f"❌ Key 不可用：{str(e)}")
                 st.warning("请检查 Key 是否正确，或账户余额是否充足。")
+    # ========== 修改处结束 ==========
 
 # 检查是否有 Key
 my_api_key = get_api_key(st.session_state.username)
