@@ -1,120 +1,69 @@
 import streamlit as st
 from zhipuai import ZhipuAI
-import json
 import time
 
-# ================= 配置区域 =================
-# 请将此处替换为你真实的智谱 API Key
-API_KEY = "299781151d6347df8c982a8753e7cebc.oWwPRnAPGUfzPrC5" 
-# ===========================================
-
-# 1. 页面基础设置
-st.set_page_config(page_title="链盾 ChainShield - 智能合约审计专家", page_icon="🛡️", layout="wide")
+# ================= 1. 页面基础设置 =================
+st.set_page_config(page_title="链盾 ChainShield", page_icon="🛡️", layout="wide")
 st.title("🛡️ 链盾 ChainShield")
-st.caption("基于 GLM-5.3-Flash 驱动的区块链安全审计智能体")
+st.caption("基于 GLM-4-Flash 驱动的区块链安全审计智能体")
 
-# 2. 初始化会话状态 (用于保存对话历史及新增的控制状态)
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "你好！我是链盾安全专家。请上传你的 Solidity (.sol) 文件，或直接粘贴代码片段，我将为你进行深度安全审计。"}
-    ]
+# ================= 2. 安全获取 API Key =================
+# 尝试从 Streamlit Secrets 获取（云端部署时）
+try:
+    API_KEY = st.secrets["ZHIPU_API_KEY"]
+except Exception:
+    # 如果获取不到（比如本地运行），则使用侧边栏输入
+    st.sidebar.warning("⚠️ 未检测到云端密钥，请在下方手动输入 API Key")
+    API_KEY = st.sidebar.text_input("请输入智谱 API Key", type="password")
 
-# 【新增】初始化暂停状态和流式生成状态
-if "is_paused" not in st.session_state:
-    st.session_state.is_paused = False
-if "is_generating" not in st.session_state:
-    st.session_state.is_generating = False
+# ================= 3. 初始化模型 =================
+if API_KEY:
+    client = ZhipuAI(api_key=API_KEY)
+else:
+    st.error("🚫 请先配置 API Key 才能使用！")
+    st.stop()
 
-# 3. 侧边栏：文件上传与设置
-with st.sidebar:
-    st.header("⚙️ 控制面板")
-    uploaded_file = st.file_uploader("上传 .sol 合约文件", type=["sol"])
-    
-    if uploaded_file is not None:
-        # 读取文件内容
-        file_content = uploaded_file.read().decode("utf-8")
-        st.success(f"已加载文件: {uploaded_file.name}")
-        
-        # 触发自动审计逻辑
-        if st.button("🚀 开始智能审计", type="primary"):
-            with st.spinner("正在分析代码逻辑与漏洞特征..."):
-                # 构造审计专用的 Prompt
-                audit_prompt = f"""
-                你是一位拥有10年经验的区块链安全审计专家。请对以下 Solidity 代码进行严格审计。
+# ================= 4. 侧边栏：用户输入 =================
+st.sidebar.header("📝 合约代码输入")
+contract_code = st.sidebar.text_area("请粘贴 Solidity 合约代码：", height=300, placeholder="pragma solidity ^0.8.0; ...")
+
+analyze_button = st.sidebar.button("🚀 开始审计", type="primary")
+
+# ================= 5. 主界面：显示结果 =================
+if analyze_button:
+    if not contract_code:
+        st.warning("⚠️ 请先在左侧粘贴合约代码！")
+    else:
+        with st.spinner("🤖 AI 正在深度分析合约漏洞..."):
+            try:
+                # 构造 Prompt
+                prompt = f"""你是一位资深的区块链安全专家。请审计以下 Solidity 智能合约代码，找出潜在的安全漏洞（如重入攻击、整数溢出、权限控制缺失等）。
                 
-                【代码内容】：
-                ```solidity
-                {file_content}
-                ```
-
-                【任务要求】：
-                1. 识别代码中的高危漏洞（如重入攻击、整数溢出、权限控制缺失等）。
-                2. 如果没有漏洞，请明确指出代码是安全的。
-                3. 输出格式必须包含：[风险等级]、[漏洞类型]、[代码行号]、[修复建议]。
-                4. 请用 Markdown 格式输出报告，保持专业且简洁。
-                """
+                代码内容：
+                {contract_code}
                 
-                # 调用 GLM-5.3-Flash
-                client = ZhipuAI(api_key=API_KEY)
+                请按以下格式输出报告：
+                1. **风险等级**：(高/中/低)
+                2. **漏洞名称**：
+                3. **问题描述**：
+                4. **修复建议**：
+                
+                如果没有发现明显漏洞，请直接回复“✅ 代码看起来非常安全”。"""
+
+                # 调用智谱 API
                 response = client.chat.completions.create(
-                    model="glm-5.3-flash", # 使用你购买的 Flash 模型
-                    messages=[{"role": "user", "content": audit_prompt}]
+                    model="glm-4-flash", 
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1
                 )
                 
-                audit_result = response.choices[0].message.content
+                result = response.choices[0].message.content
                 
-                # 将结果加入对话历史
-                st.session_state.messages.append({"role": "user", "content": f"请审计文件：{uploaded_file.name}"})
-                st.session_state.messages.append({"role": "assistant", "content": audit_result})
-                st.rerun() # 刷新页面显示结果
-
-
-# 4. 主界面：对话窗口展示
-# 遍历并显示历史消息
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# 5. 用户手动输入框 (支持追问)
-if prompt := st.chat_input("你可以针对审计报告继续提问，例如：'如何修复第3行的重入漏洞？'"):
-    # 显示用户输入
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # 模拟 AI 思考并回复
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        
-        # 构造包含上下文的请求
-        messages_payload = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-        
-        client = ZhipuAI(api_key=API_KEY)
-        response = client.chat.completions.create(
-            model="glm-5.3-flash",
-            messages=messages_payload,
-            stream=True # 开启流式输出，体验更好
-        )
-        
-        # 标记开始生成
-        st.session_state.is_generating = True
-        
-        # 逐字打印效果
-        for chunk in response:
-            # 【新增】检查是否被暂停，如果暂停则跳出循环
-            if st.session_state.is_paused:
-                break
+                # 显示结果
+                st.success("✅ 审计完成！")
+                st.markdown(result)
                 
-            if chunk.choices[0].delta.content is not None:
-                full_response += chunk.choices[0].delta.content
-                message_placeholder.markdown(full_response + "▌")
-        
-        message_placeholder.markdown(full_response)
-    
-    # 标记生成结束
-    st.session_state.is_generating = False
-    # 生成结束后重置暂停状态
-    st.session_state.is_paused = False
-    
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+            except Exception as e:
+                st.error(f"❌ 调用 AI 失败：{str(e)}")
+else:
+    st.info("👈 请在左侧粘贴代码并点击开始审计")
