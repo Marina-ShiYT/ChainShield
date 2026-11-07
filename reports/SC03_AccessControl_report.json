@@ -1,0 +1,12 @@
+{
+  "has_vulnerability": true,
+  "vulnerabilities": [
+    {
+      "vulnerability_type": "访问控制缺失 (Access Control)",
+      "risk_level": "High",
+      "line_number": "11-13",
+      "description": "changeOwner 函数用于修改合约所有者，属于关键敏感函数，但未添加任何权限校验（如 onlyOwner 修饰符或 require(msg.sender == owner) 检查）。任何外部地址都可以调用该函数将 owner 替换为任意地址，实现所有权劫持。一旦合约后续增加依赖 owner 的提现、铸币、参数修改等功能，攻击者将完全控制合约。",
+      "fix_suggestion": "添加 onlyOwner 权限修饰符，并校验新地址合法性：\n\nmodifier onlyOwner() {\n    require(msg.sender == owner, \"caller is not the owner\");\n    _;\n}\n\nfunction changeOwner(address newOwner) public onlyOwner {\n    require(newOwner != address(0), \"new owner is the zero address\");\n    owner = newOwner;\n}"
+    }
+  ]
+}
