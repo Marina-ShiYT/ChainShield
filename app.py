@@ -71,7 +71,7 @@ def get_api_key(username):
     return row[0] if row else None
 
 # ================= 页面配置 =================
-st.set_page_config(page_title="ChainShield", page_icon="️", layout="wide")
+st.set_page_config(page_title="ChainShield", page_icon="🛡️", layout="wide")
 init_db()
 
 # ================= 登录/注册逻辑 =================
@@ -80,7 +80,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.username = ""
 
 if not st.session_state.logged_in:
-    st.title("️ ChainShield 登录")
+    st.title("🛡️ ChainShield 登录")
     
     tab1, tab2 = st.tabs(["登录", "注册"])
     
@@ -111,31 +111,39 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ================= 主应用逻辑 (登录后显示) =================
-st.sidebar.title(f" {st.session_state.username}")
+st.sidebar.title(f"👤 {st.session_state.username}")
 if st.sidebar.button("退出登录"):
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.rerun()
 
-# --- Key 设置模块 (带确认勾选框 & 真实连通性测试) ---
+# --- Key 设置模块 (带确认勾选框) ---
 st.sidebar.markdown("---")
-st.sidebar.subheader("️ API 设置")
+st.sidebar.subheader("⚙️ API 设置")
 current_key = get_api_key(st.session_state.username)
 
-# 如果数据库里有 key，显示脱敏；如果没有，显示空
+# 【修改1：数据脱敏显示】如果数据库里有 key，显示脱敏后的格式
 display_key = ""
 if current_key:
-    display_key = current_key[:6] + "..." + current_key[-4:] if len(current_key) > 10 else "******"
+    if len(current_key) > 10:
+        display_key = current_key[:6] + "****" + current_key[-4:]
+    else:
+        display_key = "******"
+    st.sidebar.success(f"✅ 当前已配置 Key: `{display_key}`")
+else:
+    st.sidebar.warning("⚠️ 尚未配置 Key")
 
 with st.sidebar.expander("配置 API Key", expanded=(not current_key)):
     new_key = st.text_input("ZhipuAI Key", value="", type="password", placeholder="sk-...")
     confirm_check = st.checkbox("我已阅读并确认 Key 将加密存储", key="key_confirm")
     
     if st.button("保存 Key"):
-        if not confirm_check:
+        if not new_key.startswith("sk-"):
+            st.warning("Key 格式似乎不正确 (应以 sk- 开头)")
+        elif not confirm_check:
             st.error("请先勾选确认框！")
         else:
-            # 【核心新增】真实连通性测试
+            # 【修改2：保存标准改为真实可用性验证】
             st.info("正在验证 Key 的有效性，请稍候...")
             try:
                 test_client = ZhipuAI(api_key=new_key)
@@ -145,24 +153,24 @@ with st.sidebar.expander("配置 API Key", expanded=(not current_key)):
                     messages=[{"role": "user", "content": "hi"}],
                     max_tokens=5
                 )
-                # 如果没报错，说明 Key 有效
+                # 如果没报错，说明 Key 有效，才执行保存
                 update_api_key(st.session_state.username, new_key)
-                st.success(" Key 验证通过并保存成功！")
+                st.success("✅ Key 验证通过并保存成功！")
                 st.rerun()
                 
             except Exception as e:
-                # 如果报错，说明 Key 无效
-                st.error(f" Key 验证失败：{str(e)}")
+                # 如果报错，说明 Key 无效，拦截保存
+                st.error(f"❌ Key 验证失败：{str(e)}")
                 st.warning("请检查 Key 是否正确，或账户余额是否充足。")
 
 # 检查是否有 Key
 my_api_key = get_api_key(st.session_state.username)
 if not my_api_key:
-    st.warning("️ 请先在左侧栏配置您的 API Key 才能开始审计。")
+    st.warning("⚠️ 请先在左侧栏配置您的 API Key 才能开始审计。")
     st.stop()
 
 # --- 聊天界面 ---
-st.title("️ ChainShield 智能合约审计")
+st.title("🛡️ ChainShield 智能合约审计")
 st.caption("基于 GLM-4-Flash 驱动的区块链安全审计智能体")
 
 # 初始化历史记录
@@ -171,32 +179,32 @@ if "messages" not in st.session_state:
 
 # 渲染历史消息 (带头像)
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"], avatar="" if msg["role"] == "user" else "️"):
+    with st.chat_message(msg["role"], avatar="👤" if msg["role"] == "user" else "🛡️"):
         st.markdown(msg["content"])
 
 # 输入框
 if prompt := st.chat_input("请输入智能合约代码..."):
     # 1. 显示用户消息
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user", avatar=""):
+    with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
     # 2. 构造 Prompt (包含总-分-总要求)
     system_prompt = """你是一位资深的区块链安全审计专家。请对用户提供的智能合约代码进行严格审计。
     
 【输出格式要求】必须严格遵守以下结构：
-1.  **审计总结**：一句话概括合约的主要风险等级（高/中/低）和核心问题。
-2.  **详细分析**：
+1. 📝 **审计总结**：一句话概括合约的主要风险等级（高/中/低）和核心问题。
+2. 🔍 **详细分析**：
    - 逐行或逐函数指出漏洞（如重入攻击、整数溢出、权限控制缺失等）。
    - 引用具体代码片段。
-3.  **修复建议**：给出修改后的代码示例或具体的防御措施。
+3. 💡 **修复建议**：给出修改后的代码示例或具体的防御措施。
 """
     
     messages_payload = [{"role": "system", "content": system_prompt}]
     messages_payload.extend(st.session_state.messages)
 
     # 3. 调用 AI
-    with st.chat_message("assistant", avatar="️"):
+    with st.chat_message("assistant", avatar="🛡️"):
         message_placeholder = st.empty()
         full_response = ""
         
