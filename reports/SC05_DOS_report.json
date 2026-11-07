@@ -1,0 +1,19 @@
+{
+  "has_vulnerability": true,
+  "vulnerabilities": [
+    {
+      "vulnerability_type": "拒绝服务",
+      "risk_level": "High",
+      "line_number": "11-15",
+      "description": "distribute() 在 for 循环中对每个用户执行外部调用 transfer(1 ether)。transfer 仅转发 2300 gas，若数组中任一地址为恶意合约（revert 或故意消耗 gas 的 fallback），整个循环将 revert，导致所有用户永远无法收到款项；同时循环次数取决于 users 数组长度，数组无上限增长后循环将超出区块 Gas 上限，distribute() 永久失效（典型的 Unbounded Loop + Failed Send DoS）。",
+      "fix_suggestion": "改用提现模式，由用户自行提取资金：mapping(address => uint256) public pending; 分发时仅更新 pending 余额，用户调用 claim() 通过 call 提取：function claim() public { uint256 amount = pending[msg.sender]; pending[msg.sender] = 0; (bool ok, ) = msg.sender.call{value: amount}(''); require(ok, 'fail'); }。若必须批量转账，应使用 call{value: 1 ether}('') 并记录失败索引以便跳过/重试，同时限制数组最大长度。"
+    },
+    {
+      "vulnerability_type": "访问控制缺失",
+      "risk_level": "Medium",
+      "line_number": "7-9",
+      "description": "addUser() 与 distribute() 均为 public 且缺少任何权限校验（无 onlyOwner / require 校验）。任意攻击者可无限次调用 addUser 向 users 数组写入任意地址，迅速膨胀数组，与 distribute() 的无上限循环叠加可主动制造 Gas 耗尽型 DoS；此外任何人都能随意触发资金分发。",
+      "fix_suggestion": "为敏感函数添加权限修饰符：address public owner; constructor() { owner = msg.sender; } modifier onlyOwner() { require(msg.sender == owner, 'not owner'); _; } function addUser(address user) public onlyOwner { users.push(user); } function distribute() public onlyOwner { ... }"
+    }
+  ]
+}
