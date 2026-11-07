@@ -122,16 +122,39 @@ if "is_generating" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 控制面板")
     
-    # 【新增】后台管理 API Key
+    # 【唯一修改处：API Key 安全展示与保存逻辑（增加二次确认）】
     st.subheader("🔑 配置 API Key")
     current_key = get_api_key()
-    new_key = st.text_input("智谱 API Key", type="password", value=current_key if current_key else "")
+    
+    # 如果数据库里有 Key，生成脱敏显示文本（前4位 + **** + 后4位）
+    if current_key and len(current_key) > 8:
+        masked_key = current_key[:4] + "****" + current_key[-4:]
+        st.success(f"✅ 已保存: `{masked_key}`")
+    elif current_key:
+        st.success("✅ Key 已保存")
+    else:
+        st.warning("⚠️ 尚未配置 Key")
+    
+    # 输入框默认留空，防止明文回显
+    new_key = st.text_input("输入新的 API Key", type="password", placeholder="留空则不修改", key="key_input")
+    
+    # 增加二次确认勾选框
+    confirm_save = st.checkbox("我已确认保存此 API Key", key="confirm_save_key")
+    
     if st.button("💾 保存 Key"):
-        if new_key:
-            save_api_key(new_key)
-            st.success("Key 已安全保存！")
+        if not new_key:
+            if not current_key:
+                st.warning("请输入有效的 API Key！")
         else:
-            st.warning("Key 不能为空")
+            # 只有勾选了确认框，才允许保存
+            if confirm_save:
+                save_api_key(new_key)
+                st.success("Key 已安全保存！")
+                st.rerun()  # 刷新页面以显示脱敏后的 Key
+            else:
+                st.error("❌ 请先勾选上方的确认框，才能保存 Key！")
+    # ===================================================
+    
     st.divider()
     
     uploaded_file = st.file_uploader("上传 .sol 合约文件", type=["sol"])
@@ -146,7 +169,7 @@ with st.sidebar:
                 st.error("请先在上方配置 API Key！")
             else:
                 with st.spinner("正在分析代码逻辑与漏洞特征..."):
-                    # ================== 【唯一修改处：Prompt 改为总分总结构】 ==================
+                    # ================== 【Prompt 保持总分总结构】 ==================
                     audit_prompt = f"""
                     你是一位拥有10年经验的区块链安全审计专家。请对以下 Solidity 代码进行严格审计。
                     
