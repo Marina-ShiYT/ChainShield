@@ -2,7 +2,6 @@ import streamlit as st
 from zhipuai import ZhipuAI
 import sqlite3
 import bcrypt
-import time
 import os
 
 # ================= 数据库管理模块 =================
@@ -19,16 +18,13 @@ def init_db():
                   password_hash TEXT NOT NULL,
                   api_key TEXT)''')
     
-    # 2. 【关键修复】自动迁移逻辑：检查旧表是否缺少 api_key 列
+    # 2. 自动迁移逻辑：检查旧表是否缺少 api_key 列
     try:
         c.execute("SELECT api_key FROM users LIMIT 1")
     except sqlite3.OperationalError:
-        # 如果报错，说明是旧表，执行升级操作
-        print("检测到旧版数据库，正在自动迁移...")
         try:
             c.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
             conn.commit()
-            print("数据库迁移成功！")
         except Exception as e:
             st.error(f"数据库迁移失败: {e}")
             
@@ -111,187 +107,170 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ================= 主应用逻辑 (登录后显示) =================
+# --- 侧边栏 (左侧) ---
 st.sidebar.title(f"👤 {st.session_state.username}")
 if st.sidebar.button("退出登录"):
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.rerun()
 
-# --- Key 设置模块 (带确认勾选框 & 真实验证 & 严格脱敏 & 自动清空) ---
+# 1. API 设置模块
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ API 设置")
+current_key = get_api_key(st.session_state.username)
 
-# 获取当前数据库中的 Key
-current_key_db = get_api_key(st.session_state.username)
-
-# 【严格脱敏展示】如果数据库里有 key，只显示前4位和后4位
-if current_key_db:
-    if len(current_key_db) > 8:
-        masked_key = current_key_db[:4] + "****" + current_key_db[-4:]
+# 【严格脱敏展示】
+if current_key:
+    if len(current_key) > 8:
+        masked_key = current_key[:4] + "****" + current_key[-4:]
     else:
         masked_key = "******"
     st.sidebar.success(f"✅ 当前已配置 Key: `{masked_key}`")
 else:
     st.sidebar.warning("⚠️ 尚未配置 Key")
 
-# 初始化输入框的状态变量，确保刷新时能控制它的值
+# 使用 Session State 控制输入框清空
 if 'input_key_value' not in st.session_state:
     st.session_state.input_key_value = ""
 
-with st.sidebar.expander("配置新的 API Key", expanded=(not current_key_db)):
-    # 【关键点】value 绑定 session_state，type=password 确保即使有缓存也是黑点
-    new_key_input = st.text_input(
+with st.sidebar.expander("配置新的 API Key", expanded=(not current_key)):
+    new_key = st.text_input(
         "输入新的 ZhipuAI Key", 
         value=st.session_state.input_key_value, 
         type="password", 
         placeholder="sk-..."
     )
-    
     confirm_check = st.checkbox("我已阅读并确认 Key 将加密存储", key="key_confirm")
     
     if st.button("保存 Key"):
         if not confirm_check:
             st.error("请先勾选确认框！")
-        elif not new_key_input:
+        elif not new_key:
             st.warning("请输入 Key")
         else:
-            # 【真实可用性验证】以"可以使用"为保存标准
-            with st.spinner("⏳ 正在连接智谱 AI 验证 Key 可用性..."):
-                try:
-                    test_client = ZhipuAI(api_key=new_key_input)
-                    # 发送一个极小的请求测试连通性
-                    test_response = test_client.chat.completions.create(
-                        model="glm-4-flash",
-                        messages=[{"role": "user", "content": "hi"}],
-                        max_tokens=5
-                    )
-                    
-                    # 测试通过，说明 Key 可用，执行保存
-                    update_api_key(st.session_state.username, new_key_input)
-                    
-                    # 【关键修复】保存成功后，强制清空输入框的状态变量
-                    st.session_state.input_key_value = ""
-                    
-                    st.success("✅ Key 验证可用，已安全保存！输入框已清空。")
-                    st.rerun() # 刷新页面，此时输入框会因为 value="" 而变空
-                    
-                except Exception as e:
-                    st.error(f"❌ Key 验证失败：{str(e)}")
-                    st.warning("请检查 Key 是否正确，或账户余额是否充足。")
+            st.info("⏳ 正在验证 Key 是否可用，请稍候...")
+            try:
+                test_client = ZhipuAI(api_key=new_key)
+                test_response = test_client.chat.completions.create(
+                    model="glm-4-flash",
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=5
+                )
+                update_api_key(st.session_state.username, new_key)
+                st.success("✅ Key 验证可用，保存成功！")
+                
+                # 【关键】保存成功后清空输入框变量，并刷新页面
+                st.session_state.input_key_value = "" 
+                st.rerun() 
+            except Exception as e:
+                st.error(f"❌ Key 不可用：{str(e)}")
 
-# ================= 审计功能模块 =================
+# 2. 文件上传模块
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 上传合约文件")
-
-# 初始化审计触发器
-if 'trigger_audit' not in st.session_state:
-    st.session_state.trigger_audit = False
-if 'audit_content' not in st.session_state:
-    st.session_state.audit_content = ""
-
 uploaded_file = st.sidebar.file_uploader("上传 .sol 合约文件", type=["sol"])
 
-# 处理文件上传后的按钮点击
 if uploaded_file is not None:
-    # 读取文件内容
     file_content = uploaded_file.read().decode("utf-8")
     st.sidebar.success(f"已加载文件: {uploaded_file.name}")
     
     if st.sidebar.button("🚀 开始智能审计", type="primary"):
         api_key = get_api_key(st.session_state.username)
         if not api_key:
-            st.sidebar.error("⚠️ 请先在上方配置 API Key！")
+            st.sidebar.error("请先配置 API Key！")
         else:
-            # 设置触发器和内容
-            st.session_state.audit_content = f"请审计以下智能合约文件：\n\n```solidity\n{file_content}\n```"
-            st.session_state.trigger_audit = True
+            # 构造审计指令
+            audit_prompt = f"请对以下智能合约文件进行严格审计：\n\n文件名：{uploaded_file.name}\n\n代码内容：\n```solidity\n{file_content}\n```"
+            
+            # 将审计指令加入历史记录，并标记需要立即触发 AI
+            st.session_state.messages.append({"role": "user", "content": audit_prompt})
+            st.session_state.trigger_audit = True # 设置触发标志
             st.rerun()
 
-# 检查是否有 Key (如果没有 Key，禁止进行后续聊天操作，但不影响上传)
+# 检查是否有 Key (用于主界面拦截)
 my_api_key = get_api_key(st.session_state.username)
 if not my_api_key:
-    st.info("💡 提示：请先在左侧栏配置您的 API Key 才能开始审计对话。")
-    # 注意：这里不再使用 st.stop()，以免阻断页面渲染导致看不到上传组件
+    st.warning("⚠️ 请先在左侧栏配置您的 API Key 才能开始审计。")
+    st.stop()
 
-# --- 聊天界面 ---
+# --- 主界面 (右侧) ---
 st.title("🛡️ ChainShield 智能合约审计")
 st.caption("基于 GLM-4-Flash 驱动的区块链安全审计智能体")
 
-# 初始化历史记录
+# 初始化聊天记录
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 【关键修复】处理审计触发逻辑
-# 如果是通过点击“开始审计”触发的刷新，且还没有把这条消息加入历史，则加入
-if st.session_state.trigger_audit and st.session_state.audit_content:
-    # 检查最后一条消息是不是这个内容，防止重复添加
-    if not st.session_state.messages or st.session_state.messages[-1]['content'] != st.session_state.audit_content:
-        st.session_state.messages.append({"role": "user", "content": st.session_state.audit_content})
-        
-        # 构造 AI 回复
-        system_prompt = """你是一位资深的区块链安全审计专家。请对用户提供的智能合约代码进行严格审计。
-        
-【输出格式要求】必须严格遵守以下结构：
-1. 📝 **审计总结**：一句话概括合约的主要风险等级（高/中/低）和核心问题。
-2. 🔍 **详细分析**：
-   - 逐行或逐函数指出漏洞（如重入攻击、整数溢出、权限控制缺失等）。
-   - 引用具体代码片段。
-3. 💡 **修复建议**：给出修改后的代码示例或具体的防御措施。
-"""
-        
-        messages_payload = [{"role": "system", "content": system_prompt}]
-        messages_payload.extend(st.session_state.messages)
-
-        with st.chat_message("assistant", avatar="🛡️"):
-            message_placeholder = st.empty()
-            full_response = ""
-            
-            try:
-                client = ZhipuAI(api_key=my_api_key)
-                response = client.chat.completions.create(
-                    model="glm-4-flash",
-                    messages=messages_payload,
-                    stream=True
-                )
-                
-                for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        full_response += chunk.choices[0].delta.content
-                        message_placeholder.markdown(full_response + "▌")
-                
-                message_placeholder.markdown(full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                
-            except Exception as e:
-                st.error(f"调用 AI 失败: {str(e)}")
-        
-        # 重置触发器，防止刷新页面重复审计
-        st.session_state.trigger_audit = False
-        st.session_state.audit_content = ""
-        st.rerun() 
-
-# 渲染历史消息 (带头像)
+# 渲染历史消息
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar="👤" if msg["role"] == "user" else "🛡️"):
         st.markdown(msg["content"])
 
-# 手动输入框 (支持直接粘贴代码)
-if prompt := st.chat_input("或者在此处直接粘贴智能合约代码..."):
+# 处理“开始审计”触发的自动回复
+if st.session_state.get('trigger_audit', False):
+    st.session_state.trigger_audit = False # 重置标志
+    
+    # 获取最后一条用户消息（即刚才上传的代码）
+    last_user_msg = st.session_state.messages[-1]["content"]
+    
+    # 构造 System Prompt (包含总分总 + 颜色圆点要求)
+    system_prompt = """你是一位资深的区块链安全审计专家。请对用户提供的智能合约代码进行严格审计。
+
+【输出格式要求】必须严格遵守以下结构，并使用中文回答：
+
+1. 📝 **审计总结**：
+   - 一句话概括合约的主要风险等级（高/中/低）和核心问题。
+
+2. 🔍 **详细分析**（必须使用以下颜色圆点标注风险等级）：
+   - 🔴 **严重漏洞**：如重入攻击、权限控制缺失、整数溢出等可能导致资金损失的问题。
+   - 🟡 **中度风险**：如未检查返回值、Gas 优化空间、逻辑不严谨等。
+   - 🟢 **轻微问题**：如代码规范建议、注释缺失、命名不规范等。
+   - *针对每个问题，请引用具体代码片段并解释原理。*
+
+3. 💡 **修复建议**：
+   - 给出修改后的代码示例或具体的防御措施。
+
+【重要】：审计完成后，你可以继续回答用户关于该合约的任何后续问题。"""
+
+    messages_payload = [{"role": "system", "content": system_prompt}]
+    messages_payload.extend(st.session_state.messages)
+
+    # 调用 AI 生成审计报告
+    with st.chat_message("assistant", avatar="🛡️"):
+        message_placeholder = st.empty()
+        full_response = ""
+        
+        try:
+            client = ZhipuAI(api_key=my_api_key)
+            response = client.chat.completions.create(
+                model="glm-4-flash",
+                messages=messages_payload,
+                stream=True
+            )
+            
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    full_response += chunk.choices[0].delta.content
+                    message_placeholder.markdown(full_response + "▌")
+            
+            message_placeholder.markdown(full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
+        except Exception as e:
+            st.error(f"调用 AI 失败: {str(e)}")
+
+# 正常的聊天输入框 (支持后续追问)
+if prompt := st.chat_input("请输入智能合约代码，或针对审计报告提问..."):
     # 1. 显示用户消息
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
-    # 2. 构造 Prompt
-    system_prompt = """你是一位资深的区块链安全审计专家。请对用户提供的智能合约代码进行严格审计。
-    
-【输出格式要求】必须严格遵守以下结构：
-1. 📝 **审计总结**：一句话概括合约的主要风险等级（高/中/低）和核心问题。
-2. 🔍 **详细分析**：
-   - 逐行或逐函数指出漏洞（如重入攻击、整数溢出、权限控制缺失等）。
-   - 引用具体代码片段。
-3. 💡 **修复建议**：给出修改后的代码示例或具体的防御措施。
-"""
+    # 2. 构造 Payload (包含历史上下文，实现多轮对话)
+    system_prompt = """你是一位资深的区块链安全审计专家。
+    如果用户发送了代码，请按照【审计总结 -> 详细分析(🔴🟡🟢分级) -> 修复建议】的格式输出。
+    如果用户在审计后继续提问，请结合之前的代码和审计结果进行解答。
+    所有回复必须使用中文。"""
     
     messages_payload = [{"role": "system", "content": system_prompt}]
     messages_payload.extend(st.session_state.messages)
