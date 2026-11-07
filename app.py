@@ -12,13 +12,18 @@ def init_db():
     """初始化数据库，并自动处理旧版本表的升级"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    
+    # 1. 创建用户表 (如果不存在)
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (username TEXT PRIMARY KEY, 
                   password_hash TEXT NOT NULL,
                   api_key TEXT)''')
+    
+    # 2. 【关键修复】自动迁移逻辑：检查旧表是否缺少 api_key 列
     try:
         c.execute("SELECT api_key FROM users LIMIT 1")
     except sqlite3.OperationalError:
+        # 如果报错，说明是旧表，执行升级操作
         print("检测到旧版数据库，正在自动迁移...")
         try:
             c.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
@@ -26,6 +31,7 @@ def init_db():
             print("数据库迁移成功！")
         except Exception as e:
             st.error(f"数据库迁移失败: {e}")
+            
     conn.close()
 
 def get_user(username):
@@ -43,11 +49,11 @@ def create_user(username, password):
     try:
         c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_pw))
         conn.commit()
-        return True
+        success = True
     except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+        success = False
+    conn.close()
+    return success
 
 def update_api_key(username, api_key):
     conn = sqlite3.connect(DB_NAME)
@@ -64,7 +70,7 @@ def get_api_key(username):
     conn.close()
     return row[0] if row else None
 
-# ================= 页面配置与初始化 =================
+# ================= 页面配置 =================
 st.set_page_config(page_title="ChainShield", page_icon="🛡️", layout="wide")
 init_db()
 
@@ -75,6 +81,7 @@ if 'logged_in' not in st.session_state:
 
 if not st.session_state.logged_in:
     st.title("🛡️ ChainShield 登录")
+    
     tab1, tab2 = st.tabs(["登录", "注册"])
     
     with tab1:
@@ -110,31 +117,34 @@ if st.sidebar.button("退出登录"):
     st.session_state.username = ""
     st.rerun()
 
-# --- 1. Key 设置模块 (真实可用验证 + 严格脱敏) ---
+# --- Key 设置模块 (带确认勾选框 & 真实验证 & 严格脱敏) ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ API 设置")
 current_key = get_api_key(st.session_state.username)
 
-# 【严格脱敏展示】
+# 【严格脱敏展示】如果数据库里有 key，只显示前4位和后4位
 if current_key:
-    masked_key = f"{current_key[:6]}****{current_key[-4:]}" if len(current_key) > 10 else "******"
-    st.sidebar.success(f"✅ 已配置 Key: `{masked_key}`")
+    if len(current_key) > 8:
+        masked_key = current_key[:4] + "****" + current_key[-4:]
+    else:
+        masked_key = "******"
+    st.sidebar.success(f"✅ 当前已配置 Key: `{masked_key}`")
 else:
     st.sidebar.warning("⚠️ 尚未配置 Key")
 
-with st.sidebar.expander("配置/更新 API Key", expanded=(not current_key)):
-    # 输入框永远为空，防止明文残留
+with st.sidebar.expander("配置新的 API Key", expanded=(not current_key)):
+    # 【严格脱敏】输入框永远留空，防止明文回显或缓存泄露
     new_key = st.text_input("输入新的 ZhipuAI Key", value="", type="password", placeholder="sk-...")
     confirm_check = st.checkbox("我已阅读并确认 Key 将加密存储", key="key_confirm")
     
     if st.button("保存 Key"):
-        if not new_key.startswith("sk-"):
-            st.warning("Key 格式似乎不正确 (应以 sk- 开头)")
-        elif not confirm_check:
+        if not confirm_check:
             st.error("请先勾选确认框！")
+        elif not new_key:
+            st.warning("请输入 Key")
         else:
-            # 【核心修改：以真实可用为保存标准】
-            st.info("⏳ 正在连接智谱 AI 验证 Key 有效性...")
+            # 【真实可用性验证】以"可以使用"为保存标准
+            st.info("⏳ 正在验证 Key 是否可用，请稍候...")
             try:
                 test_client = ZhipuAI(api_key=new_key)
                 test_response = test_client.chat.completions.create(
@@ -142,52 +152,61 @@ with st.sidebar.expander("配置/更新 API Key", expanded=(not current_key)):
                     messages=[{"role": "user", "content": "hi"}],
                     max_tokens=5
                 )
+                # 测试通过，说明 Key 可用，才执行保存
                 update_api_key(st.session_state.username, new_key)
                 st.success("✅ Key 验证可用，保存成功！")
-                st.rerun() # 刷新清空输入框
+                st.rerun() # 刷新页面，输入框清空，显示脱敏Key
             except Exception as e:
                 st.error(f"❌ Key 不可用：{str(e)}")
+                st.warning("请检查 Key 是否正确，或账户余额是否充足。")
 
-# --- 2. 文件上传模块 (找回丢失的功能) ---
+# 【新增：文件上传部分】
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 上传合约文件")
 uploaded_file = st.sidebar.file_uploader("上传 .sol 合约文件", type=["sol"])
 
-# 检查是否有 Key，没有则停止后续加载
+if uploaded_file is not None:
+    file_content = uploaded_file.read().decode("utf-8")
+    st.sidebar.success(f"已加载文件: {uploaded_file.name}")
+    
+    if st.sidebar.button("🚀 开始智能审计", type="primary"):
+        api_key = get_api_key(st.session_state.username)
+        if not api_key:
+            st.sidebar.error("请先配置 API Key！")
+        else:
+            # 将文件内容作为 prompt 发送给聊天界面
+            file_prompt = f"请审计以下智能合约文件：\n```solidity\n{file_content}\n```"
+            # 触发聊天输入的逻辑
+            st.session_state.messages.append({"role": "user", "content": file_prompt})
+            st.rerun()
+
+# 检查是否有 Key
 my_api_key = get_api_key(st.session_state.username)
 if not my_api_key:
-    st.warning("⚠️ 请先在左侧栏配置并验证您的 API Key 才能开始审计。")
+    st.warning("⚠️ 请先在左侧栏配置您的 API Key 才能开始审计。")
     st.stop()
 
-# ================= 聊天界面 =================
+# --- 聊天界面 ---
 st.title("🛡️ ChainShield 智能合约审计")
 st.caption("基于 GLM-4-Flash 驱动的区块链安全审计智能体")
 
+# 初始化历史记录
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 渲染历史消息
+# 渲染历史消息 (带头像)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar="👤" if msg["role"] == "user" else "🛡️"):
         st.markdown(msg["content"])
 
-# --- 3. 右侧对话框与输入逻辑 (找回丢失的功能) ---
-# 处理文件上传触发的对话
-if uploaded_file is not None:
-    file_content = uploaded_file.read().decode("utf-8")
-    file_prompt = f"请审计以下智能合约文件 `{uploaded_file.name}`：\n```solidity\n{file_content}\n```"
-    # 避免重复触发，将文件内容作为当前 prompt
-    prompt = file_prompt
-    uploaded_file = None  # 重置状态
-else:
-    # 处理手动输入的对话
-    prompt = st.chat_input("请输入智能合约代码...")
-
-if prompt:
+# 输入框
+if prompt := st.chat_input("请输入智能合约代码..."):
+    # 1. 显示用户消息
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user", avatar="👤"):
         st.markdown(prompt)
 
+    # 2. 构造 Prompt (包含总-分-总要求)
     system_prompt = """你是一位资深的区块链安全审计专家。请对用户提供的智能合约代码进行严格审计。
     
 【输出格式要求】必须严格遵守以下结构：
@@ -201,6 +220,7 @@ if prompt:
     messages_payload = [{"role": "system", "content": system_prompt}]
     messages_payload.extend(st.session_state.messages)
 
+    # 3. 调用 AI
     with st.chat_message("assistant", avatar="🛡️"):
         message_placeholder = st.empty()
         full_response = ""
