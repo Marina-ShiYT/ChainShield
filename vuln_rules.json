@@ -1,23 +1,42 @@
-
 [
   {
-    "name": "重入攻击 (Reentrancy)",
-    "description": "在外部调用返回前，状态变量未更新，导致攻击者可重复调用函数提取资金。",
-    "code_pattern": "外部调用 (call/send/transfer) 与 状态变量更新 (balance/userInfo) 顺序颠倒"
+    "id": "SC01",
+    "name": "Reentrancy (重入攻击)",
+    "description": "合约在进行外部调用（如 call, send）时，未更新内部状态变量，导致攻击者可递归调用该函数并掏空资金。",
+    "code_pattern": ["call{", ".call(", ".send(", ".transfer("],
+    "severity": "High",
+    "recommendation": "严格遵循 Checks-Effects-Interactions (CEI) 模式，先更新状态变量，再进行外部调用；或使用 ReentrancyGuard。"
   },
   {
-    "name": "整数溢出 (Integer Overflow/Underflow)",
-    "description": "Solidity 0.8.0 之前版本，数学运算未使用 SafeMath，可能导致数值回绕。",
-    "code_pattern": "未使用 SafeMath 库进行加减乘除运算"
+    "id": "SC02",
+    "name": "Integer Overflow/Underflow (整数溢出)",
+    "description": "在 Solidity 0.8.0 以下版本中，算术运算未检查边界，可能导致数值回绕，破坏业务逻辑。",
+    "code_pattern": ["+", "-", "*", "/"],
+    "severity": "Medium",
+    "recommendation": "升级至 Solidity 0.8.0 及以上版本（自带溢出检查），或使用 OpenZeppelin 的 SafeMath 库。"
   },
   {
-    "name": "访问控制缺失 (Access Control)",
-    "description": "关键函数（如铸币、提现、修改参数）缺少权限校验修饰符。",
-    "code_pattern": "敏感函数缺少 onlyOwner / require(msg.sender == admin) 等校验"
+    "id": "SC03",
+    "name": "Access Control (访问控制缺失)",
+    "description": "敏感函数（如铸币、提现、修改参数）未添加权限修饰符，导致任何人都可以执行。",
+    "code_pattern": ["function", "msg.sender"],
+    "severity": "High",
+    "recommendation": "为敏感函数添加 `onlyOwner` 或基于角色的访问控制（RBAC）修饰符。"
   },
   {
-    "name": "拒绝服务 (DoS)",
-    "description": "循环中执行外部调用或无上限的数组操作，导致 Gas 耗尽。",
-    "code_pattern": "for/while 循环中包含 call/send 或 push 操作"
+    "id": "SC04",
+    "name": "Unchecked Call (未检查的外部调用)",
+    "description": "合约在进行外部调用（如 transfer, send, call）时，未检查返回值或异常，可能导致资金丢失或逻辑中断。",
+    "code_pattern": [".call(", ".transfer(", ".send("],
+    "severity": "High",
+    "recommendation": "使用 OpenZeppelin 的 SafeERC20 库，或在调用后严格检查布尔返回值。"
+  },
+  {
+    "id": "SC05",
+    "name": "DoS (拒绝服务)",
+    "description": "合约逻辑依赖外部不可控因素（如外部合约调用失败、Gas 耗尽、无限循环），导致正常用户无法使用合约。",
+    "code_pattern": ["push(", "for (", "require("],
+    "severity": "Medium",
+    "recommendation": "避免在循环中进行外部调用；使用 Pull（提取）模式代替 Push（推送）模式发放资金。"
   }
 ]

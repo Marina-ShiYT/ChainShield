@@ -3,7 +3,25 @@ from zhipuai import ZhipuAI
 import sqlite3
 import bcrypt
 import os
+import json  
 
+# ================= RAG 规则库加载模块 =================
+RULES_FILE = "vuln_rules.json"
+
+def load_rag_context():
+    """加载本地规则库作为 RAG 上下文，不修改原有逻辑"""
+    try:
+        if os.path.exists(RULES_FILE):
+            with open(RULES_FILE, 'r', encoding='utf-8') as f:
+                rules = json.load(f)
+            context = "【审计知识库 - 请优先参考以下规则】\n"
+            for rule in rules:
+                context += f"- {rule['id']} {rule['name']}: {rule['description']} (严重度: {rule['severity']})\n"
+            return context
+    except Exception:
+        pass
+    return ""  # 加载失败时返回空字符串，不影响主流程
+    
 # ================= 数据库管理模块 =================
 DB_NAME = "chainshield_users.db"
 
@@ -152,7 +170,7 @@ with st.sidebar.expander("配置新的 API Key", expanded=(not current_key)):
             try:
                 test_client = ZhipuAI(api_key=new_key)
                 test_response = test_client.chat.completions.create(
-                    model="glm-4-flash",
+                    model="glm-5-flash",
                     messages=[{"role": "user", "content": "hi"}],
                     max_tokens=5
                 )
@@ -195,7 +213,7 @@ if not my_api_key:
 
 # --- 主界面 (右侧) ---
 st.title("🛡️ ChainShield 智能合约审计")
-st.caption("基于 GLM-4-Flash 驱动的区块链安全审计智能体")
+st.caption("基于 Glm-5-Flash 驱动的区块链安全审计智能体")
 
 # 初始化聊天记录
 if "messages" not in st.session_state:
@@ -235,6 +253,11 @@ if st.session_state.get('trigger_audit', False):
     messages_payload = [{"role": "system", "content": system_prompt}]
     messages_payload.extend(st.session_state.messages)
 
+    # 【新增】注入 RAG 规则库上下文
+    rag_ctx = load_rag_context()
+    if rag_ctx:
+        messages_payload[0]["content"] += "\n\n" + rag_ctx
+
     # 调用 AI 生成审计报告
     with st.chat_message("assistant", avatar="🛡️"):
         message_placeholder = st.empty()
@@ -243,7 +266,7 @@ if st.session_state.get('trigger_audit', False):
         try:
             client = ZhipuAI(api_key=my_api_key)
             response = client.chat.completions.create(
-                model="glm-4-flash",
+                model="glm-5-flash",
                 messages=messages_payload,
                 stream=True
             )
@@ -275,6 +298,11 @@ if prompt := st.chat_input("请输入智能合约代码，或针对审计报告�
     messages_payload = [{"role": "system", "content": system_prompt}]
     messages_payload.extend(st.session_state.messages)
 
+    # 【新增】注入 RAG 规则库上下文
+    rag_ctx = load_rag_context()
+    if rag_ctx:
+        messages_payload[0]["content"] += "\n\n" + rag_ctx
+
     # 3. 调用 AI
     with st.chat_message("assistant", avatar="🛡️"):
         message_placeholder = st.empty()
@@ -283,7 +311,7 @@ if prompt := st.chat_input("请输入智能合约代码，或针对审计报告�
         try:
             client = ZhipuAI(api_key=my_api_key)
             response = client.chat.completions.create(
-                model="glm-4-flash",
+                model="glm-5-flash",
                 messages=messages_payload,
                 stream=True
             )
