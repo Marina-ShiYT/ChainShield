@@ -170,7 +170,7 @@ with st.sidebar.expander("配置新的 API Key", expanded=(not current_key)):
             try:
                 test_client = ZhipuAI(api_key=new_key)
                 test_response = test_client.chat.completions.create(
-                    model="glm-5-flash",
+                    model="glm-5.3-flash",
                     messages=[{"role": "user", "content": "hi"}],
                     max_tokens=5
                 )
@@ -213,7 +213,7 @@ if not my_api_key:
 
 # --- 主界面 (右侧) ---
 st.title("🛡️ ChainShield 智能合约审计")
-st.caption("基于 Glm-5-Flash 驱动的区块链安全审计智能体")
+st.caption("基于 Glm-5.3-Flash 驱动的区块链安全审计智能体")
 
 # 初始化聊天记录
 if "messages" not in st.session_state:
@@ -266,7 +266,7 @@ if st.session_state.get('trigger_audit', False):
         try:
             client = ZhipuAI(api_key=my_api_key)
             response = client.chat.completions.create(
-                model="glm-5-flash",
+                model="glm-5.3-flash",
                 messages=messages_payload,
                 stream=True
             )
@@ -311,7 +311,7 @@ if prompt := st.chat_input("请输入智能合约代码，或针对审计报告�
         try:
             client = ZhipuAI(api_key=my_api_key)
             response = client.chat.completions.create(
-                model="glm-5-flash",
+                model="glm-5.3-flash",
                 messages=messages_payload,
                 stream=True
             )
